@@ -38,4 +38,75 @@ GOOGLE_CLOUD_REGION = os.getenv("GOOGLE_CLOUD_REGION", "us-central1")
 
 if __name__ == "__main__":
     # TODO: implement evaluation
-    pass
+    eval_data_researcher = os.path.dirname(__file__) + "/eval_data_researcher.json"
+    metrics=[
+        # Compares the agent's output against a "Golden Answer"
+        types.RubricMetric.FINAL_RESPONSE_MATCH,
+        # Did the agent use the tools effectively?
+        types.RubricMetric.TOOL_USE_QUALITY,
+        # Custom metrics for tools trajectory analysis
+        get_custom_function_metric("trajectory_precision", trajectory_precision_func),
+        get_custom_function_metric("trajectory_recall", trajectory_recall_func)
+    ]
+
+    print("🧪 Running Researcher Evaluation...")
+    eval_results = asyncio.run(
+        # Run the evaluation and retrieve the results.
+        evaluate_agent(
+            agent_api_server=RESEARCHER_URL, # Agent Service URL (in Cloud Run).
+            agent_name="agent", # Agent name as it's exposed by the server.
+            evaluation_data_file=eval_data_researcher, # Evaluation data file.
+            # GCS location for the Evaluation Service to store the result to.
+            evaluation_storage_uri=f"gs://{GOOGLE_CLOUD_PROJECT}-agents/evaluation",
+            metrics=metrics, # Metrics to use when evaluating the agent.
+            project_id=GOOGLE_CLOUD_PROJECT,
+            location=GOOGLE_CLOUD_REGION
+        )
+    )
+    print(f"\n🧪 Researcher Evaluation results:\n{eval_results}")
+    print(f"Evaluation Run ID: {eval_results.run_id}")
+
+
+    METRIC_THRESHOLD = 0.75
+    researcher_eval_failed = False
+    if eval_results.state != types.EvaluationRunState.SUCCEEDED:
+        print(f"🛑 Researcher Evaluation failed with state {eval_results.state}.")
+        researcher_eval_failed = True
+    else:
+        for metric_name, metric_values in eval_results.metrics.items():
+            if metric_values["mean"] < METRIC_THRESHOLD:
+                print(f"🛑 Researcher Evaluation failed with metric `{metric_name}` below {METRIC_THRESHOLD} threshold.")
+                researcher_eval_failed = True
+    if researcher_eval_failed:
+        exit(1)
+
+
+    eval_data_orchestrator = os.path.dirname(__file__) + "/eval_data_orchestrator.json"
+    metrics=[
+        types.RubricMetric.HALLUCINATION,
+    ]
+
+    print("🧪 Running Orchestrator Evaluation...")
+    eval_results = asyncio.run(evaluate_agent(
+        agent_api_server=ORCHESTRATOR_URL,
+        agent_name="agent",
+        evaluation_data_file=eval_data_orchestrator,
+        evaluation_storage_uri=f"gs://{GOOGLE_CLOUD_PROJECT}-agents/evaluation",
+        metrics=metrics,
+        project_id=GOOGLE_CLOUD_PROJECT,
+        location=GOOGLE_CLOUD_REGION
+    ))
+    print(f"\n🧪 Orchestrator Evaluation results:\n{eval_results}")
+    print(f"Evaluation Run ID: {eval_results.run_id}")
+    METRIC_THRESHOLD = 0.75
+    orchestrator_eval_failed = False
+    if eval_results.state != types.EvaluationRunState.SUCCEEDED:
+        print(f"🛑 Orchestrator Evaluation failed with state {eval_results.state}.")
+        orchestrator_eval_failed = True
+    else:
+        for metric_name, metric_values in eval_results.metrics.items():
+            if metric_values["mean"] < METRIC_THRESHOLD:
+                print(f"🛑 Orchestrator Evaluation failed with metric `{metric_name}` below {METRIC_THRESHOLD} threshold.")
+                orchestrator_eval_failed = True
+    if orchestrator_eval_failed:
+        exit(1)
